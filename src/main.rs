@@ -10,7 +10,9 @@ use std::net::SocketAddr;
 use mio::Token;
 use mio_websocket::interface::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::borrow::Borrow;
+use std::iter::FromIterator;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -27,7 +29,7 @@ enum SyncCommand {
 
 struct Session {
     owner: Token,
-    clients: Vec<Token>,
+    clients: HashSet<Token>,
     tick: u64,
     playing: bool
 }
@@ -37,7 +39,7 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
         SyncCommand::CreateCommand { session } => {
             let new_session = Session {
                 owner: client,
-                clients: Vec::new(),
+                clients: HashSet::new(),
                 playing: false,
                 tick: 0
             };
@@ -45,7 +47,17 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
         }
         SyncCommand::JoinCommand { session: session_name } => {
             match sessions.get_mut(&session_name) {
-                Some(mut session) => session.clients.push(client),
+                Some(mut session) => {
+                    session.clients.insert(client);
+                    send_to_session(session, &SyncCommand::TickPacket {
+                        tick: session.tick,
+                        session: session_name.clone()
+                    }, ws);
+                    send_to_session(session, &SyncCommand::PlayPacket {
+                        play: session.playing,
+                        session: session_name.clone()
+                    }, ws);
+                }
                 None => println!("session {} not found", session_name)
             }
         }
@@ -54,16 +66,10 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
                 Some(mut session) => {
                     if session.owner == client {
                         session.tick = tick;
-                        let command_text = serde_json::to_string(&SyncCommand::TickPacket {
+                        send_to_session(session, &SyncCommand::TickPacket {
                             tick,
                             session: session_name
-                        }).unwrap();
-                        for peer in ws.get_connected().unwrap() {
-                            if peer != client {
-                                let response = WebSocketEvent::TextMessage(command_text.clone());
-                                ws.send((peer, response));
-                            }
-                        }
+                        }, ws);
                     }
                 }
                 None => println!("session {} not found", session_name)
@@ -74,21 +80,25 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
                 Some(mut session) => {
                     if session.owner == client {
                         session.playing = play;
-                        let command_text = serde_json::to_string(&SyncCommand::PlayPacket {
+                        send_to_session(session, &SyncCommand::PlayPacket {
                             play,
                             session: session_name
-                        }).unwrap();
-                        for peer in ws.get_connected().unwrap() {
-                            if peer != client {
-                                let response = WebSocketEvent::TextMessage(command_text.clone());
-                                ws.send((peer, response));
-                            }
-                        }
+                        }, ws);
                     }
                 }
                 None => println!("session {} not found", session_name)
             }
         }
+    }
+}
+
+fn send_to_session(session: &Session, command: &SyncCommand, ws: &mut WebSocket) {
+    let command_text = serde_json::to_string(command).unwrap();
+    let all_clients = HashSet::from_iter(ws.get_connected().unwrap());
+    let peers = &all_clients & &session.clients;
+    for peer in peers {
+        let response = WebSocketEvent::TextMessage(command_text.clone());
+        ws.send((peer, response));
     }
 }
 
