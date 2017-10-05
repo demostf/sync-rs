@@ -121,7 +121,7 @@ fn main() {
                 let result: Result<SyncCommand, serde_json::Error> = serde_json::from_str(msg.borrow());
                 match result {
                     Ok(command) => {
-                        handle_command(command, &mut sessions, tok.clone(), &mut ws);
+                        handle_command(command, &mut sessions, tok, &mut ws);
                     }
                     _ => {}
                 }
