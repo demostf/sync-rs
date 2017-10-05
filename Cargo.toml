@@ -1,0 +1,11 @@
+[package]
+name = "sync"
+version = "0.1.0"
+authors = ["Robin Appelman <robin@icewind.nl>"]
+
+[dependencies]
+mio-websocket = { git = "https://github.com/nbaksalyar/mio-websocket" }
+mio = "*"
+serde = "*"
+serde_json = "*"
+serde_derive = "*"
