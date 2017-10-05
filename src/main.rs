@@ -60,8 +60,6 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
                         }).unwrap();
                         for peer in ws.get_connected().unwrap() {
                             if peer != client {
-                                println!("-> relaying to peer {:?}", peer);
-
                                 let response = WebSocketEvent::TextMessage(command_text.clone());
                                 ws.send((peer, response));
                             }
@@ -82,8 +80,6 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
                         }).unwrap();
                         for peer in ws.get_connected().unwrap() {
                             if peer != client {
-                                println!("-> relaying to peer {:?}", peer);
-
                                 let response = WebSocketEvent::TextMessage(command_text.clone());
                                 ws.send((peer, response));
                             }
@@ -97,9 +93,13 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
 }
 
 fn main() {
+    let port = std::env::var("PORT").unwrap_or("80".to_string());
+    let listen = format!("0.0.0.0:{}", port);
     let mut sessions: HashMap<String, Session> = HashMap::new();
 
-    let mut ws = WebSocket::new("0.0.0.0:10000".parse::<SocketAddr>().unwrap());
+    let mut ws = WebSocket::new(listen.parse::<SocketAddr>().unwrap());
+
+    println!("listening on: {:?}", listen);
 
     loop {
         match ws.next() {
@@ -118,7 +118,6 @@ fn main() {
             }
 
             (tok, WebSocketEvent::BinaryMessage(msg)) => {
-                println!("msg from {:?}", tok);
                 let response = WebSocketEvent::BinaryMessage(msg.clone());
                 ws.send((tok, response));
             }
