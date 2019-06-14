@@ -1,11 +1,16 @@
 use mio::Token;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
+
 use std::collections::HashMap;
 use std::rc::Rc;
-use ws::{listen, CloseCode, Error, Handler, Message, Result, Sender};
+use ws::{listen, CloseCode, Error, Handler, Message, Result};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+mod client;
+
+use client::{Client, ClientTrait};
+use std::cell::RefCell;
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 enum SyncCommand {
@@ -15,6 +20,7 @@ enum SyncCommand {
     Play { session: String, play: bool },
 }
 
+#[derive(PartialEq, Debug)]
 struct Session {
     owner: Token,
     clients: HashMap<Token, Client>,
@@ -43,31 +49,6 @@ impl Session {
         for client in self.clients.values() {
             client.send(&command_text).ok();
         }
-    }
-}
-
-trait ClientTrait {
-    fn send(&self, msg: &str) -> Result<()>;
-
-    fn token(&self) -> Token;
-}
-
-#[derive(Clone, Debug)]
-struct Client(Sender);
-
-impl ClientTrait for Client {
-    fn send(&self, msg: &str) -> Result<()> {
-        self.0.send(msg)
-    }
-
-    fn token(&self) -> Token {
-        self.0.token()
-    }
-}
-
-impl From<Sender> for Client {
-    fn from(sender: Sender) -> Self {
-        Client(sender)
     }
 }
 
@@ -190,6 +171,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use maplit::hashmap;
 
     #[test]
     fn test_deserialize() {
@@ -200,5 +182,327 @@ mod tests {
             },
             serde_json::from_str(input).unwrap()
         );
+    }
+
+    #[test]
+    fn test_create() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(HashMap::new());
+        let sender = Client::mock(1);
+        let command = SyncCommand::Create {
+            session: "test".into(),
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![],
+                    tick: 0,
+                    playing: false
+                }
+            },
+            sessions.into_inner()
+        );
+    }
+
+    #[test]
+    fn test_play_owner() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 0,
+                playing: false
+            }
+        });
+        let sender = Client::mock(1);
+        let command = SyncCommand::Play {
+            session: "test".into(),
+            play: true,
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![],
+                    tick: 0,
+                    playing: true
+                }
+            },
+            sessions.into_inner()
+        );
+    }
+
+    #[test]
+    fn test_play_not_owner() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 0,
+                playing: false
+            }
+        });
+        let sender = Client::mock(2);
+        let command = SyncCommand::Play {
+            session: "test".into(),
+            play: true,
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![],
+                    tick: 0,
+                    playing: false
+                }
+            },
+            sessions.into_inner()
+        );
+    }
+
+    #[test]
+    fn test_tick_owner() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 0,
+                playing: false
+            }
+        });
+        let sender = Client::mock(1);
+        let command = SyncCommand::Tick {
+            session: "test".into(),
+            tick: 99,
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![],
+                    tick: 99,
+                    playing: false
+                }
+            },
+            sessions.into_inner()
+        );
+    }
+
+    #[test]
+    fn test_tick_not_owner() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 0,
+                playing: false
+            }
+        });
+        let sender = Client::mock(2);
+        let command = SyncCommand::Tick {
+            session: "test".into(),
+            tick: 99,
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![],
+                    tick: 0,
+                    playing: false
+                }
+            },
+            sessions.into_inner()
+        );
+    }
+
+    #[test]
+    fn test_join() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 99,
+                playing: true
+            }
+        });
+        let sender = Client::mock(2);
+        let command = SyncCommand::Join {
+            session: "test".into(),
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![Token(2) => sender.clone()],
+                    tick: 99,
+                    playing: true
+                }
+            },
+            sessions.into_inner()
+        );
+
+        if let Client::Mock(mock) = sender {
+            assert_eq!(
+                vec![
+                    SyncCommand::Tick {
+                        session: "test".into(),
+                        tick: 99
+                    },
+                    SyncCommand::Play {
+                        session: "test".into(),
+                        play: true
+                    }
+                ],
+                mock.received()
+            );
+        };
+    }
+
+    #[test]
+    fn test_join_non_existing() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 0,
+                playing: false
+            }
+        });
+        let sender = Client::mock(2);
+        let command = SyncCommand::Join {
+            session: "test2".into(),
+        };
+
+        handle_command(command, &sender, &sessions);
+
+        assert_eq!(
+            hashmap! {
+                "test".into() => Session {
+                    owner: Token(1),
+                    clients: hashmap![],
+                    tick: 0,
+                    playing: false
+                }
+            },
+            sessions.into_inner()
+        );
+    }
+
+    #[test]
+    fn test_forward() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 99,
+                playing: true
+            },
+            "test2".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 99,
+                playing: true
+            }
+        });
+        let owner = Client::mock(1);
+        let sender1 = Client::mock(2);
+        let sender2 = Client::mock(3);
+        let command = SyncCommand::Join {
+            session: "test".into(),
+        };
+
+        handle_command(command, &sender1, &sessions);
+
+        let command = SyncCommand::Join {
+            session: "test2".into(),
+        };
+        handle_command(command, &sender2, &sessions);
+
+        if let Client::Mock(mock) = &sender1 {
+            mock.clear();
+        }
+        if let Client::Mock(mock) = &sender2 {
+            mock.clear();
+        }
+
+        let command = SyncCommand::Tick {
+            session: "test".into(),
+            tick: 999,
+        };
+
+        handle_command(command, &owner, &sessions);
+
+        if let Client::Mock(mock) = sender1 {
+            assert_eq!(
+                vec![SyncCommand::Tick {
+                    session: "test".into(),
+                    tick: 999
+                },],
+                mock.received()
+            );
+        };
+        if let Client::Mock(mock) = sender2 {
+            assert_eq!(0, mock.received().len());
+        };
+    }
+
+    #[test]
+    fn test_forward_non_owner() {
+        let sessions: RefCell<HashMap<String, Session>> = RefCell::new(hashmap! {
+            "test".into() => Session {
+                owner: Token(1),
+                clients: hashmap![],
+                tick: 99,
+                playing: true
+            }
+        });
+        let sender1 = Client::mock(2);
+        let sender2 = Client::mock(3);
+        let command = SyncCommand::Join {
+            session: "test".into(),
+        };
+
+        handle_command(command.clone(), &sender1, &sessions);
+        handle_command(command.clone(), &sender2, &sessions);
+
+        if let Client::Mock(mock) = &sender1 {
+            mock.clear();
+        }
+        if let Client::Mock(mock) = &sender2 {
+            mock.clear();
+        }
+
+        let command = SyncCommand::Tick {
+            session: "test".into(),
+            tick: 999,
+        };
+
+        handle_command(command, &sender1, &sessions);
+
+        if let Client::Mock(mock) = sender1 {
+            assert_eq!(0, mock.received().len());
+        };
+        if let Client::Mock(mock) = sender2 {
+            assert_eq!(0, mock.received().len());
+        };
     }
 }
