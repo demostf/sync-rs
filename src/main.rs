@@ -1,16 +1,9 @@
-#[macro_use]
-extern crate serde_derive;
-
-extern crate ws;
-extern crate mio;
-extern crate serde;
-extern crate serde_json;
-
 use mio::Token;
 use std::collections::HashMap;
 use ws::{listen, Handler, Sender, Result, Message, CloseCode, Error};
 use std::rc::Rc;
 use std::cell::RefCell;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -46,7 +39,7 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
         }
         SyncCommand::JoinCommand { session: session_name } => {
             match sessions.get_mut(&session_name) {
-                Some(mut session) => {
+                Some(session) => {
                     session.clients.insert(client.token(), client);
                     send_to_session(session, &SyncCommand::TickPacket {
                         tick: session.tick,
@@ -62,7 +55,7 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
         }
         SyncCommand::TickPacket { tick, session: session_name } => {
             match sessions.get_mut(&session_name) {
-                Some(mut session) => {
+                Some(session) => {
                     if session.owner == client.token() {
                         session.tick = tick;
                         send_to_session(session, &SyncCommand::TickPacket {
@@ -76,7 +69,7 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
         }
         SyncCommand::PlayPacket { play, session: session_name } => {
             match sessions.get_mut(&session_name) {
-                Some(mut session) => {
+                Some(session) => {
                     if session.owner == client.token() {
                         session.playing = play;
                         send_to_session(session, &SyncCommand::PlayPacket {
