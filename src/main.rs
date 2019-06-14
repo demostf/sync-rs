@@ -1,9 +1,9 @@
 use mio::Token;
-use std::collections::HashMap;
-use ws::{listen, Handler, Sender, Result, Message, CloseCode, Error};
-use std::rc::Rc;
-use std::cell::RefCell;
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+use ws::{listen, CloseCode, Error, Handler, Message, Result, Sender};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
@@ -17,7 +17,7 @@ enum SyncCommand {
 
 struct Session {
     owner: Token,
-    clients: HashMap<Token, Sender>,
+    clients: HashMap<Token, Client>,
     tick: u64,
     playing: bool,
 }
@@ -31,82 +31,129 @@ impl Session {
             tick: 0,
         }
     }
+
+    pub fn join(&mut self, client: &Client) {
+        self.clients.insert(client.token(), client.clone());
+    }
 }
 
 impl Session {
     pub fn send_command(&self, command: &SyncCommand) {
         let command_text = serde_json::to_string(command).unwrap();
         for client in self.clients.values() {
-            client.send(Message::from(command_text.clone())).ok();
+            client.send(&command_text).ok();
         }
     }
 }
 
-fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>, client: Sender) {
-    match command {
-        SyncCommand::Create { session } => {
-            sessions.insert(session, Session::new(client.token()));
-        }
-        SyncCommand::Join { session: session_name } => {
-            match sessions.get_mut(&session_name) {
-                Some(session) => {
-                    session.clients.insert(client.token(), client);
-                    session.send_command(&SyncCommand::Tick {
-                        tick: session.tick,
-                        session: session_name.clone(),
-                    });
-                    session.send_command(&SyncCommand::Play {
-                        play: session.playing,
-                        session: session_name.clone(),
-                    });
-                }
-                None => println!("session {} not found", session_name)
-            }
-        }
-        SyncCommand::Tick { tick, session: session_name } => {
-            match sessions.get_mut(&session_name) {
-                Some(session) => {
-                    if session.owner == client.token() {
-                        session.tick = tick;
-                        session.send_command(&SyncCommand::Tick {
-                            tick,
-                            session: session_name,
-                        });
-                    }
-                }
-                None => println!("session {} not found", session_name)
-            }
-        }
-        SyncCommand::Play { play, session: session_name } => {
-            match sessions.get_mut(&session_name) {
-                Some(session) => {
-                    if session.owner == client.token() {
-                        session.playing = play;
-                        session.send_command(&SyncCommand::Play {
-                            play,
-                            session: session_name,
-                        });
-                    }
-                }
-                None => println!("session {} not found", session_name)
-            }
-        }
+trait ClientTrait {
+    fn send(&self, msg: &str) -> Result<()>;
+
+    fn token(&self) -> Token;
+}
+
+#[derive(Clone, Debug)]
+struct Client(Sender);
+
+impl ClientTrait for Client {
+    fn send(&self, msg: &str) -> Result<()> {
+        self.0.send(msg)
+    }
+
+    fn token(&self) -> Token {
+        self.0.token()
+    }
+}
+
+impl From<Sender> for Client {
+    fn from(sender: Sender) -> Self {
+        Client(sender)
     }
 }
 
 struct Server {
-    out: Sender,
+    out: Client,
     sessions: Rc<RefCell<HashMap<String, Session>>>,
+}
+
+fn handle_command(
+    command: SyncCommand,
+    sender: &Client,
+    sessions: &RefCell<HashMap<String, Session>>,
+) {
+    match &command {
+        SyncCommand::Create { session } => {
+            sessions
+                .borrow_mut()
+                .insert(session.clone(), Session::new(sender.token()));
+        }
+        SyncCommand::Join {
+            session: session_name,
+        } => match sessions.borrow_mut().get_mut(session_name) {
+            Some(session) => {
+                session.join(sender);
+                session.send_command(&SyncCommand::Tick {
+                    tick: session.tick,
+                    session: session_name.clone(),
+                });
+                session.send_command(&SyncCommand::Play {
+                    play: session.playing,
+                    session: session_name.clone(),
+                });
+            }
+            None => println!("session {} not found", session_name),
+        },
+        SyncCommand::Tick {
+            tick,
+            session: session_name,
+        } => update_session_and_forward(
+            sender,
+            sessions,
+            session_name,
+            |session| session.tick = *tick,
+            &command,
+        ),
+        SyncCommand::Play {
+            play,
+            session: session_name,
+        } => update_session_and_forward(
+            sender,
+            sessions,
+            session_name,
+            |session| session.playing = *play,
+            &command,
+        ),
+    }
+}
+
+fn update_session_and_forward<F>(
+    sender: &Client,
+    sessions: &RefCell<HashMap<String, Session>>,
+    session_name: &str,
+    mut update_fn: F,
+    command: &SyncCommand,
+) where
+    F: FnMut(&mut Session),
+{
+    match sessions.borrow_mut().get_mut(session_name) {
+        Some(session) => {
+            if session.owner == sender.token() {
+                update_fn(session);
+                session.send_command(command);
+            }
+        }
+        None => println!("session {} not found", session_name),
+    }
 }
 
 impl Handler for Server {
     fn on_message(&mut self, msg: Message) -> Result<()> {
         match serde_json::from_str::<SyncCommand>(msg.as_text().unwrap_or_default()) {
             Ok(command) => {
-                handle_command(command, &mut self.sessions.borrow_mut(), self.out.clone());
+                handle_command(command, &self.out, &self.sessions);
                 Ok(())
             }
-            Err(_) => Ok(())
+            Err(_) => Ok(()),
         }
     }
 
@@ -133,7 +180,11 @@ fn main() {
 
     let sessions: Rc<RefCell<HashMap<String, Session>>> = Rc::new(RefCell::new(HashMap::new()));
 
-    listen(listen_address, |out| { Server { out, sessions: sessions.clone() } }).unwrap()
+    listen(listen_address, |out| Server {
+        out: out.into(),
+        sessions: sessions.clone(),
+    })
+    .unwrap()
 }
 
 #[cfg(test)]
@@ -143,6 +194,11 @@ mod tests {
     #[test]
     fn test_deserialize() {
         let input = "{\"type\": \"create\", \"session\": \"foo\"}";
-        assert_eq!(SyncCommand::Create { session: "foo".to_string() }, serde_json::from_str(input).unwrap());
+        assert_eq!(
+            SyncCommand::Create {
+                session: "foo".to_string()
+            },
+            serde_json::from_str(input).unwrap()
+        );
     }
 }
