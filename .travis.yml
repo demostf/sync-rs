@@ -5,10 +5,17 @@ rust:
   - beta
   - nightly
 
+before_cache: |
+  if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
+    RUSTFLAGS="--cfg procmacro2_semver_exempt" cargo install cargo-tarpaulin -f
+  fi
+
 scripts:
   - cargo build
   - cargo test
 
-after_success:
-  - cargo tarpaulin --all-features --out Xml
-  - bash <(curl -s https://codecov.io/bash)
+after_success: |
+  if [[ "$TRAVIS_RUST_VERSION" == nightly ]]; then
+    cargo tarpaulin --all-features --out Xml
+    bash <(curl -s https://codecov.io/bash)
+  fi
