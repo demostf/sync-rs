@@ -1,8 +1,5 @@
-use crate::SyncCommand;
 use enum_dispatch::enum_dispatch;
 use mio::Token;
-use std::cell::RefCell;
-use std::rc::Rc;
 use ws::{Result, Sender};
 
 #[enum_dispatch(Client)]
@@ -31,49 +28,70 @@ impl From<Sender> for SenderClient {
     }
 }
 
-#[derive(Clone, Debug)]
-pub(crate) struct MockClient {
-    received: Rc<RefCell<Vec<String>>>,
-    token: Token,
-}
+#[cfg(test)]
+mod mock {
+    use crate::client::ClientTrait;
+    use crate::SyncCommand;
+    use mio::Token;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use ws::Result;
 
-impl PartialEq for MockClient {
-    fn eq(&self, other: &MockClient) -> bool {
-        self.token == other.token
-    }
-}
-
-impl ClientTrait for MockClient {
-    fn send(&self, msg: &str) -> Result<()> {
-        self.received.borrow_mut().push(msg.into());
-        Ok(())
+    #[derive(Clone, Debug)]
+    pub(crate) struct MockClient {
+        received: Rc<RefCell<Vec<String>>>,
+        token: Token,
     }
 
-    fn token(&self) -> Token {
-        self.token
-    }
-}
-
-impl MockClient {
-    pub fn new(token: usize) -> Self {
-        MockClient {
-            received: Rc::new(RefCell::new(Vec::new())),
-            token: Token(token),
+    impl PartialEq for MockClient {
+        fn eq(&self, other: &MockClient) -> bool {
+            self.token == other.token
         }
     }
 
-    pub fn received(&self) -> Vec<SyncCommand> {
-        RefCell::borrow(&self.received)
-            .iter()
-            .map(|msg| serde_json::from_str::<SyncCommand>(msg).expect("invalid message"))
-            .collect()
+    impl ClientTrait for MockClient {
+        fn send(&self, msg: &str) -> Result<()> {
+            self.received.borrow_mut().push(msg.into());
+            Ok(())
+        }
+
+        fn token(&self) -> Token {
+            self.token
+        }
     }
 
-    pub fn clear(&self) {
-        self.received.borrow_mut().clear()
+    impl MockClient {
+        pub fn new(token: usize) -> Self {
+            MockClient {
+                received: Rc::new(RefCell::new(Vec::new())),
+                token: Token(token),
+            }
+        }
+
+        pub fn received(&self) -> Vec<SyncCommand> {
+            RefCell::borrow(&self.received)
+                .iter()
+                .map(|msg| serde_json::from_str::<SyncCommand>(msg).expect("invalid message"))
+                .collect()
+        }
+
+        pub fn clear(&self) {
+            self.received.borrow_mut().clear()
+        }
     }
 }
 
+#[cfg(test)]
+pub(crate) use mock::MockClient;
+
+#[cfg(not(test))]
+#[enum_dispatch]
+#[derive(PartialEq, Clone, Debug)]
+pub(crate) enum Client {
+    Sender(SenderClient),
+}
+
+#[cfg(test)]
 #[enum_dispatch]
 #[derive(PartialEq, Clone, Debug)]
 pub(crate) enum Client {
@@ -81,6 +99,7 @@ pub(crate) enum Client {
     Mock(MockClient),
 }
 
+#[cfg(test)]
 impl Client {
     pub fn mock(token: usize) -> Self {
         Client::Mock(MockClient::new(token))
