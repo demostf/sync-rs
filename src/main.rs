@@ -5,76 +5,86 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
+#[serde(rename_all = "lowercase")]
 enum SyncCommand {
-    #[serde(rename = "create")]
-    CreateCommand { session: String },
-    #[serde(rename = "join")]
-    JoinCommand { session: String },
-    #[serde(rename = "tick")]
-    TickPacket { session: String, tick: u64 },
-    #[serde(rename = "play")]
-    PlayPacket { session: String, play: bool }
+    Create { session: String },
+    Join { session: String },
+    Tick { session: String, tick: u64 },
+    Play { session: String, play: bool },
 }
 
 struct Session {
     owner: Token,
     clients: HashMap<Token, Sender>,
     tick: u64,
-    playing: bool
+    playing: bool,
 }
 
+impl Session {
+    pub fn new(owner: Token) -> Self {
+        Session {
+            owner,
+            clients: HashMap::new(),
+            playing: false,
+            tick: 0,
+        }
+    }
+}
+
+impl Session {
+    pub fn send_command(&self, command: &SyncCommand) {
+        let command_text = serde_json::to_string(command).unwrap();
+        for client in self.clients.values() {
+            client.send(Message::from(command_text.clone())).ok();
+        }
+    }
+}
 
 fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>, client: Sender) {
     match command {
-        SyncCommand::CreateCommand { session } => {
-            let new_session = Session {
-                owner: client.token(),
-                clients: HashMap::new(),
-                playing: false,
-                tick: 0
-            };
-            sessions.insert(session, new_session);
+        SyncCommand::Create { session } => {
+            sessions.insert(session, Session::new(client.token()));
         }
-        SyncCommand::JoinCommand { session: session_name } => {
+        SyncCommand::Join { session: session_name } => {
             match sessions.get_mut(&session_name) {
                 Some(session) => {
                     session.clients.insert(client.token(), client);
-                    send_to_session(session, &SyncCommand::TickPacket {
+                    session.send_command(&SyncCommand::Tick {
                         tick: session.tick,
-                        session: session_name.clone()
+                        session: session_name.clone(),
                     });
-                    send_to_session(session, &SyncCommand::PlayPacket {
+                    session.send_command(&SyncCommand::Play {
                         play: session.playing,
-                        session: session_name.clone()
+                        session: session_name.clone(),
                     });
                 }
                 None => println!("session {} not found", session_name)
             }
         }
-        SyncCommand::TickPacket { tick, session: session_name } => {
+        SyncCommand::Tick { tick, session: session_name } => {
             match sessions.get_mut(&session_name) {
                 Some(session) => {
                     if session.owner == client.token() {
                         session.tick = tick;
-                        send_to_session(session, &SyncCommand::TickPacket {
+                        session.send_command(&SyncCommand::Tick {
                             tick,
-                            session: session_name
+                            session: session_name,
                         });
                     }
                 }
                 None => println!("session {} not found", session_name)
             }
         }
-        SyncCommand::PlayPacket { play, session: session_name } => {
+        SyncCommand::Play { play, session: session_name } => {
             match sessions.get_mut(&session_name) {
                 Some(session) => {
                     if session.owner == client.token() {
                         session.playing = play;
-                        send_to_session(session, &SyncCommand::PlayPacket {
+                        session.send_command(&SyncCommand::Play {
                             play,
-                            session: session_name
+                            session: session_name,
                         });
                     }
                 }
@@ -83,14 +93,6 @@ fn handle_command(command: SyncCommand, sessions: &mut HashMap<String, Session>,
         }
     }
 }
-
-fn send_to_session(session: &Session, command: &SyncCommand) {
-    let command_text = serde_json::to_string(command).unwrap();
-    for client in session.clients.values() {
-        client.send(Message::from(command_text.clone())).ok();
-    }
-}
-
 
 struct Server {
     out: Sender,
@@ -99,8 +101,7 @@ struct Server {
 
 impl Handler for Server {
     fn on_message(&mut self, msg: Message) -> Result<()> {
-        let result: serde_json::Result<SyncCommand> = serde_json::from_str(msg.as_text().unwrap_or_default());
-        match result {
+        match serde_json::from_str::<SyncCommand>(msg.as_text().unwrap_or_default()) {
             Ok(command) => {
                 handle_command(command, &mut self.sessions.borrow_mut(), self.out.clone());
                 Ok(())
@@ -112,12 +113,7 @@ impl Handler for Server {
     fn on_close(&mut self, _: CloseCode, _: &str) {
         let mut sessions = self.sessions.borrow_mut();
         let token = self.out.token();
-        let owned_sessions: Vec<_> = sessions
-            .iter()
-            .filter(|&(_, v)| v.owner == token)
-            .map(|(k, _)| k.clone())
-            .collect();
-        for empty in owned_sessions { sessions.remove(&empty); }
+        sessions.retain(|_, session| session.owner != token);
 
         for session in sessions.values_mut() {
             session.clients.remove(&token);
@@ -130,12 +126,23 @@ impl Handler for Server {
 }
 
 fn main() {
-    let port = std::env::var("PORT").unwrap_or("80".to_string());
-    let listen_adress = format!("0.0.0.0:{}", port);
+    let port = std::env::var("PORT").unwrap_or_else(|_| "80".to_string());
+    let listen_address = format!("0.0.0.0:{}", port);
 
-    println!("listening on: {:?}", listen_adress);
+    println!("listening on: {:?}", listen_address);
 
     let sessions: Rc<RefCell<HashMap<String, Session>>> = Rc::new(RefCell::new(HashMap::new()));
 
-    listen(listen_adress, |out| { Server { out, sessions: sessions.clone() } }).unwrap()
+    listen(listen_address, |out| { Server { out, sessions: sessions.clone() } }).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize() {
+        let input = "{\"type\": \"create\", \"session\": \"foo\"}";
+        assert_eq!(SyncCommand::Create { session: "foo".to_string() }, serde_json::from_str(input).unwrap());
+    }
 }
