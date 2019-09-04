@@ -9,12 +9,13 @@ mod client;
 
 use client::{Client, ClientTrait};
 use std::cell::RefCell;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
 enum SyncCommand {
-    Create { session: String },
+    Create { session: String, token: String },
     Join { session: String },
     Tick { session: String, tick: u64 },
     Play { session: String, play: bool },
@@ -23,18 +24,22 @@ enum SyncCommand {
 #[derive(PartialEq, Debug)]
 struct Session {
     owner: Token,
+    owner_token: String,
     clients: HashMap<Token, Client>,
     tick: u64,
     playing: bool,
+    owner_left: Option<Instant>,
 }
 
 impl Session {
-    pub fn new(owner: Token) -> Self {
+    pub fn new(owner: Token, owner_token: String) -> Self {
         Session {
             owner,
+            owner_token,
             clients: HashMap::new(),
             playing: false,
             tick: 0,
+            owner_left: None,
         }
     }
 
@@ -63,10 +68,18 @@ fn handle_command(
     sessions: &RefCell<HashMap<String, Session>>,
 ) {
     match &command {
-        SyncCommand::Create { session } => {
+        SyncCommand::Create { session, token } => {
             sessions
                 .borrow_mut()
-                .insert(session.clone(), Session::new(sender.token()));
+                .entry(session.clone())
+                .and_modify(|session| {
+                    if token == &session.owner_token {
+                        session.owner = sender.token();
+                        session.owner_left = None;
+                    }
+                })
+                .or_insert_with(|| Session::new(sender.token(), token.clone()));
+            gc_sessions(sessions);
         }
         SyncCommand::Join {
             session: session_name,
@@ -107,6 +120,19 @@ fn handle_command(
     }
 }
 
+const TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+/// cleanup sessions where the owner hasn't reconnected in 15 minutes
+fn gc_sessions(sessions: &RefCell<HashMap<String, Session>>) {
+    let now = Instant::now();
+    sessions
+        .borrow_mut()
+        .retain(|_, session| match session.owner_left {
+            Some(left) => now.duration_since(left) > TIMEOUT,
+            None => true,
+        });
+}
+
 fn update_session_and_forward<F>(
     sender: &Client,
     sessions: &RefCell<HashMap<String, Session>>,
@@ -141,9 +167,12 @@ impl Handler for Server {
     fn on_close(&mut self, _: CloseCode, _: &str) {
         let mut sessions = self.sessions.borrow_mut();
         let token = self.out.token();
-        sessions.retain(|_, session| session.owner != token);
 
         for session in sessions.values_mut() {
+            if session.owner == token {
+                session.owner_left = Some(Instant::now())
+            }
+
             session.clients.remove(&token);
         }
     }
@@ -175,10 +204,11 @@ mod tests {
 
     #[test]
     fn test_deserialize() {
-        let input = "{\"type\": \"create\", \"session\": \"foo\"}";
+        let input = "{\"type\": \"create\", \"session\": \"foo\", \"token\": \"bar\"}";
         assert_eq!(
             SyncCommand::Create {
-                session: "foo".to_string()
+                session: "foo".to_string(),
+                token: "bar".to_string(),
             },
             serde_json::from_str(input).unwrap()
         );
@@ -190,6 +220,7 @@ mod tests {
         let sender = Client::mock(1);
         let command = SyncCommand::Create {
             session: "test".into(),
+            token: "bar".to_string(),
         };
 
         handle_command(command, &sender, &sessions);
@@ -200,7 +231,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![],
                     tick: 0,
-                    playing: false
+                    playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -214,7 +247,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 0,
-                playing: false
+                playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
             }
         });
         let sender = Client::mock(1);
@@ -231,7 +266,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![],
                     tick: 0,
-                    playing: true
+                    playing: true,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -245,7 +282,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 0,
-                playing: false
+                playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
             }
         });
         let sender = Client::mock(2);
@@ -262,7 +301,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![],
                     tick: 0,
-                    playing: false
+                    playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -276,7 +317,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 0,
-                playing: false
+                playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
             }
         });
         let sender = Client::mock(1);
@@ -293,7 +336,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![],
                     tick: 99,
-                    playing: false
+                    playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -307,7 +352,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 0,
-                playing: false
+                playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
             }
         });
         let sender = Client::mock(2);
@@ -324,7 +371,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![],
                     tick: 0,
-                    playing: false
+                    playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -338,7 +387,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 99,
-                playing: true
+                playing: true,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
             }
         });
         let sender = Client::mock(2);
@@ -354,7 +405,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![Token(2) => sender.clone()],
                     tick: 99,
-                    playing: true
+                    playing: true,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -384,7 +437,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 0,
-                playing: false
+                playing: false,
+                owner_token: "bar".to_string(),
+                owner_left: None
             }
         });
         let sender = Client::mock(2);
@@ -400,7 +455,9 @@ mod tests {
                     owner: Token(1),
                     clients: hashmap![],
                     tick: 0,
-                    playing: false
+                    playing: false,
+                    owner_token: "bar".to_string(),
+                    owner_left: None
                 }
             },
             sessions.into_inner()
@@ -414,13 +471,17 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 99,
-                playing: true
+                playing: true,
+                owner_token: "bar".to_string(),
+                owner_left: None
             },
             "test2".into() => Session {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 99,
-                playing: true
+                playing: true,
+                owner_token: "bar".to_string(),
+                owner_left: None
             }
         });
         let owner = Client::mock(1);
@@ -472,7 +533,9 @@ mod tests {
                 owner: Token(1),
                 clients: hashmap![],
                 tick: 99,
-                playing: true
+                playing: true,
+                owner_token: "bar".to_string(),
+                owner_left: None
             }
         });
         let sender1 = Client::mock(2);
