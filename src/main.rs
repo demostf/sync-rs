@@ -85,15 +85,21 @@ fn handle_command(
             session: session_name,
         } => match sessions.borrow_mut().get_mut(*session_name) {
             Some(session) => {
+                let _ = sender.send(
+                    &serde_json::to_string(&SyncCommand::Tick {
+                        tick: session.tick,
+                        session: session_name,
+                    })
+                    .unwrap(),
+                );
+                let _ = sender.send(
+                    &serde_json::to_string(&SyncCommand::Play {
+                        play: session.playing,
+                        session: session_name,
+                    })
+                    .unwrap(),
+                );
                 session.join(sender);
-                session.send_command(&SyncCommand::Tick {
-                    tick: session.tick,
-                    session: session_name,
-                });
-                session.send_command(&SyncCommand::Play {
-                    play: session.playing,
-                    session: session_name,
-                });
             }
             None => println!("session {} not found", session_name),
         },

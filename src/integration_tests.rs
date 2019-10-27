@@ -123,6 +123,42 @@ fn integration_tests() {
             play: true,
         },
     );
+
+    // owner reconnecting
+    std::mem::drop(owner);
+
+    let mut owner2 = test.get_client();
+
+    send(
+        &mut owner2,
+        SyncCommand::Create {
+            session: "foo",
+            token: "bar",
+        },
+    );
+
+    send(
+        &mut owner2,
+        SyncCommand::Play {
+            session: "foo",
+            play: false,
+        },
+    );
+
+    assert_receive(
+        &mut client,
+        SyncCommand::Play {
+            session: "foo",
+            play: false,
+        },
+    );
+    assert_receive(
+        &mut client2,
+        SyncCommand::Play {
+            session: "foo",
+            play: false,
+        },
+    );
 }
 
 fn send<T: std::io::Write>(client: &mut Client<T>, command: SyncCommand) {
