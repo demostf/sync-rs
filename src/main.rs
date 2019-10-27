@@ -88,11 +88,11 @@ fn handle_command(
                 session.join(sender);
                 session.send_command(&SyncCommand::Tick {
                     tick: session.tick,
-                    session: session_name.clone(),
+                    session: session_name,
                 });
                 session.send_command(&SyncCommand::Play {
                     play: session.playing,
-                    session: session_name.clone(),
+                    session: session_name,
                 });
             }
             None => println!("session {} not found", session_name),
