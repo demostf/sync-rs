@@ -68,11 +68,19 @@ mod mock {
             }
         }
 
-        pub fn received(&self) -> Vec<SyncCommand> {
-            RefCell::borrow(&self.received)
+        pub fn received_count(&self) -> usize {
+            RefCell::borrow(&self.received).len()
+        }
+
+        pub fn assert_received(&self, expected: Vec<SyncCommand>) {
+            let map = RefCell::borrow(&self.received);
+
+            let received: Vec<_> = map
                 .iter()
                 .map(|msg| serde_json::from_str::<SyncCommand>(msg).expect("invalid message"))
-                .collect()
+                .collect();
+
+            assert_eq!(expected, received);
         }
 
         pub fn clear(&self) {

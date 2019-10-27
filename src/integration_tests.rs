@@ -52,86 +52,76 @@ fn integration_tests() {
     send(
         &mut owner,
         SyncCommand::Create {
-            session: "foo".to_string(),
-            token: "bar".to_string(),
+            session: "foo",
+            token: "bar",
         },
     );
     send(
         &mut owner,
         SyncCommand::Tick {
-            session: "foo".to_string(),
+            session: "foo",
             tick: 99,
         },
     );
 
-    send(
+    send(&mut client, SyncCommand::Join { session: "foo" });
+
+    assert_receive(
         &mut client,
-        SyncCommand::Join {
-            session: "foo".to_string(),
+        SyncCommand::Tick {
+            session: "foo",
+            tick: 99,
         },
     );
-
-    assert_eq!(
-        Some(SyncCommand::Tick {
-            session: "foo".to_string(),
-            tick: 99,
-        }),
-        receive(&mut client)
-    );
-    assert_eq!(
-        Some(SyncCommand::Play {
-            session: "foo".to_string(),
-            play: false
-        }),
-        receive(&mut client)
+    assert_receive(
+        &mut client,
+        SyncCommand::Play {
+            session: "foo",
+            play: false,
+        },
     );
 
     send(
         &mut owner,
         SyncCommand::Play {
-            session: "foo".to_string(),
+            session: "foo",
             play: true,
         },
     );
-    assert_eq!(
-        Some(SyncCommand::Play {
-            session: "foo".to_string(),
-            play: true
-        }),
-        receive(&mut client)
+    assert_receive(
+        &mut client,
+        SyncCommand::Play {
+            session: "foo",
+            play: true,
+        },
     );
 
     // should be ignored
     send(
         &mut client,
         SyncCommand::Tick {
-            session: "foo".to_string(),
+            session: "foo",
             tick: 5,
         },
     );
 
     let mut client2 = test.get_client();
 
-    send(
+    send(&mut client2, SyncCommand::Join { session: "foo" });
+
+    assert_receive(
         &mut client2,
-        SyncCommand::Join {
-            session: "foo".to_string(),
+        SyncCommand::Tick {
+            session: "foo",
+            tick: 99,
         },
     );
-
-    assert_eq!(
-        Some(SyncCommand::Tick {
-            session: "foo".to_string(),
-            tick: 99,
-        }),
-        receive(&mut client2)
-    );
-    assert_eq!(
-        Some(SyncCommand::Play {
-            session: "foo".to_string(),
-            play: true
-        }),
-        receive(&mut client2)
+    assert_receive(
+        &mut client2,
+        SyncCommand::Play {
+            session: "foo",
+            play: true,
+        },
     );
 }
 
@@ -142,10 +132,8 @@ fn send<T: std::io::Write>(client: &mut Client<T>, command: SyncCommand) {
     sleep(DELAY);
 }
 
-fn receive<T: std::io::Read>(client: &mut Client<T>) -> Option<SyncCommand> {
-    client
-        .receive()
-        .unwrap()
-        .and_then(|message| message.as_text().map(|s| s.to_string()))
-        .map(|text| serde_json::from_str(&text).unwrap())
+fn assert_receive<T: std::io::Read>(client: &mut Client<T>, expected: SyncCommand) {
+    let message = client.receive().unwrap().unwrap();
+    let text = message.as_text().unwrap();
+    assert_eq!(expected, serde_json::from_str(text).unwrap());
 }

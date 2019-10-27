@@ -14,11 +14,11 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
-pub enum SyncCommand {
-    Create { session: String, token: String },
-    Join { session: String },
-    Tick { session: String, tick: u64 },
-    Play { session: String, play: bool },
+pub enum SyncCommand<'a> {
+    Create { session: &'a str, token: &'a str },
+    Join { session: &'a str },
+    Tick { session: &'a str, tick: u64 },
+    Play { session: &'a str, play: bool },
 }
 
 #[derive(PartialEq, Debug)]
@@ -71,19 +71,19 @@ fn handle_command(
         SyncCommand::Create { session, token } => {
             sessions
                 .borrow_mut()
-                .entry(session.clone())
+                .entry(session.to_string())
                 .and_modify(|session| {
                     if token == &session.owner_token {
                         session.owner = sender.token();
                         session.owner_left = None;
                     }
                 })
-                .or_insert_with(|| Session::new(sender.token(), token.clone()));
+                .or_insert_with(|| Session::new(sender.token(), token.to_string()));
             gc_sessions(sessions);
         }
         SyncCommand::Join {
             session: session_name,
-        } => match sessions.borrow_mut().get_mut(session_name) {
+        } => match sessions.borrow_mut().get_mut(*session_name) {
             Some(session) => {
                 session.join(sender);
                 session.send_command(&SyncCommand::Tick {
@@ -236,8 +236,8 @@ mod tests {
         let input = "{\"type\": \"create\", \"session\": \"foo\", \"token\": \"bar\"}";
         assert_eq!(
             SyncCommand::Create {
-                session: "foo".to_string(),
-                token: "bar".to_string(),
+                session: "foo",
+                token: "bar",
             },
             serde_json::from_str(input).unwrap()
         );
@@ -249,7 +249,7 @@ mod tests {
         let sender = Client::mock(1);
         let command = SyncCommand::Create {
             session: "test".into(),
-            token: "bar".to_string(),
+            token: "bar",
         };
 
         handle_command(command, &sender, &sessions);
@@ -283,7 +283,7 @@ mod tests {
         });
         let sender = Client::mock(1);
         let command = SyncCommand::Play {
-            session: "test".into(),
+            session: "test",
             play: true,
         };
 
@@ -318,7 +318,7 @@ mod tests {
         });
         let sender = Client::mock(2);
         let command = SyncCommand::Play {
-            session: "test".into(),
+            session: "test",
             play: true,
         };
 
@@ -353,7 +353,7 @@ mod tests {
         });
         let sender = Client::mock(1);
         let command = SyncCommand::Tick {
-            session: "test".into(),
+            session: "test",
             tick: 99,
         };
 
@@ -388,7 +388,7 @@ mod tests {
         });
         let sender = Client::mock(2);
         let command = SyncCommand::Tick {
-            session: "test".into(),
+            session: "test",
             tick: 99,
         };
 
@@ -422,9 +422,7 @@ mod tests {
             }
         });
         let sender = Client::mock(2);
-        let command = SyncCommand::Join {
-            session: "test".into(),
-        };
+        let command = SyncCommand::Join { session: "test" };
 
         handle_command(command, &sender, &sessions);
 
@@ -443,19 +441,16 @@ mod tests {
         );
 
         if let Client::Mock(mock) = sender {
-            assert_eq!(
-                vec![
-                    SyncCommand::Tick {
-                        session: "test".into(),
-                        tick: 99,
-                    },
-                    SyncCommand::Play {
-                        session: "test".into(),
-                        play: true,
-                    }
-                ],
-                mock.received()
-            );
+            mock.assert_received(vec![
+                SyncCommand::Tick {
+                    session: "test",
+                    tick: 99,
+                },
+                SyncCommand::Play {
+                    session: "test",
+                    play: true,
+                },
+            ]);
         };
     }
 
@@ -472,9 +467,7 @@ mod tests {
             }
         });
         let sender = Client::mock(2);
-        let command = SyncCommand::Join {
-            session: "test2".into(),
-        };
+        let command = SyncCommand::Join { session: "test2" };
 
         handle_command(command, &sender, &sessions);
 
@@ -516,15 +509,11 @@ mod tests {
         let owner = Client::mock(1);
         let sender1 = Client::mock(2);
         let sender2 = Client::mock(3);
-        let command = SyncCommand::Join {
-            session: "test".into(),
-        };
+        let command = SyncCommand::Join { session: "test" };
 
         handle_command(command, &sender1, &sessions);
 
-        let command = SyncCommand::Join {
-            session: "test2".into(),
-        };
+        let command = SyncCommand::Join { session: "test2" };
         handle_command(command, &sender2, &sessions);
 
         if let Client::Mock(mock) = &sender1 {
@@ -535,23 +524,20 @@ mod tests {
         }
 
         let command = SyncCommand::Tick {
-            session: "test".into(),
+            session: "test",
             tick: 999,
         };
 
         handle_command(command, &owner, &sessions);
 
         if let Client::Mock(mock) = sender1 {
-            assert_eq!(
-                vec![SyncCommand::Tick {
-                    session: "test".into(),
-                    tick: 999,
-                }],
-                mock.received()
-            );
+            mock.assert_received(vec![SyncCommand::Tick {
+                session: "test",
+                tick: 999,
+            }]);
         };
         if let Client::Mock(mock) = sender2 {
-            assert_eq!(0, mock.received().len());
+            assert_eq!(0, mock.received_count());
         };
     }
 
@@ -569,9 +555,7 @@ mod tests {
         });
         let sender1 = Client::mock(2);
         let sender2 = Client::mock(3);
-        let command = SyncCommand::Join {
-            session: "test".into(),
-        };
+        let command = SyncCommand::Join { session: "test" };
 
         handle_command(command.clone(), &sender1, &sessions);
         handle_command(command.clone(), &sender2, &sessions);
@@ -584,17 +568,17 @@ mod tests {
         }
 
         let command = SyncCommand::Tick {
-            session: "test".into(),
+            session: "test",
             tick: 999,
         };
 
         handle_command(command, &sender1, &sessions);
 
         if let Client::Mock(mock) = sender1 {
-            assert_eq!(0, mock.received().len());
+            assert_eq!(0, mock.received_count());
         };
         if let Client::Mock(mock) = sender2 {
-            assert_eq!(0, mock.received().len());
+            assert_eq!(0, mock.received_count());
         };
     }
 }
