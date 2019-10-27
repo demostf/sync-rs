@@ -13,3 +13,6 @@ enum_dispatch = "0.1"
 
 [dev-dependencies]
 maplit = "1.0"
+portpicker = "0.1.0"
+websocket-lite = "0.3.0-alpha.6"
+better-panic = "0.2.0"

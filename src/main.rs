@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 #[serde(tag = "type")]
 #[serde(rename_all = "lowercase")]
-enum SyncCommand {
+pub enum SyncCommand {
     Create { session: String, token: String },
     Join { session: String },
     Tick { session: String, tick: u64 },
@@ -182,13 +182,42 @@ impl Handler for Server {
     }
 }
 
+/// Used to spawn a server in integration tests
+#[cfg(test)]
+pub fn spawn_local_server(port: u16) -> ws::Sender {
+    use std::sync::mpsc::channel;
+    use std::thread::spawn;
+    use ws::WebSocket;
+
+    let listen_address = format!("localhost:{}", port);
+
+    let (tx, rx) = channel();
+
+    spawn(move || {
+        let sessions: Rc<RefCell<HashMap<String, Session>>> = Rc::default();
+
+        let ws = WebSocket::new(|out: ws::Sender| Server {
+            out: out.into(),
+            sessions: sessions.clone(),
+        })
+        .unwrap();
+        let ws = ws.bind(listen_address).unwrap();
+
+        tx.send(ws.broadcaster()).unwrap();
+
+        ws.run().unwrap();
+    });
+
+    rx.recv().unwrap()
+}
+
 fn main() {
     let port = std::env::var("PORT").unwrap_or_else(|_| "80".to_string());
     let listen_address = format!("0.0.0.0:{}", port);
 
     println!("listening on: {:?}", listen_address);
 
-    let sessions: Rc<RefCell<HashMap<String, Session>>> = Rc::new(RefCell::new(HashMap::new()));
+    let sessions: Rc<RefCell<HashMap<String, Session>>> = Rc::default();
 
     listen(listen_address, |out| Server {
         out: out.into(),
@@ -418,11 +447,11 @@ mod tests {
                 vec![
                     SyncCommand::Tick {
                         session: "test".into(),
-                        tick: 99
+                        tick: 99,
                     },
                     SyncCommand::Play {
                         session: "test".into(),
-                        play: true
+                        play: true,
                     }
                 ],
                 mock.received()
@@ -516,8 +545,8 @@ mod tests {
             assert_eq!(
                 vec![SyncCommand::Tick {
                     session: "test".into(),
-                    tick: 999
-                },],
+                    tick: 999,
+                }],
                 mock.received()
             );
         };
@@ -569,3 +598,6 @@ mod tests {
         };
     }
 }
+
+#[cfg(test)]
+mod integration_tests;
