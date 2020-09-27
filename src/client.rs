@@ -1,6 +1,6 @@
 use enum_dispatch::enum_dispatch;
 use mio::Token;
-use ws::{Result, Sender};
+use parity_ws::{Result, Sender};
 
 #[enum_dispatch(Client)]
 pub(crate) trait ClientTrait {
@@ -33,9 +33,9 @@ mod mock {
     use crate::client::ClientTrait;
     use crate::SyncCommand;
     use mio::Token;
+    use parity_ws::Result;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use ws::Result;
 
     #[derive(Clone, Debug)]
     pub(crate) struct MockClient {

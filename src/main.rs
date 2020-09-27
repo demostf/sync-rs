@@ -1,9 +1,9 @@
 use mio::Token;
 use serde::{Deserialize, Serialize};
 
+use parity_ws::{listen, CloseCode, Error, Handler, Message, Result};
 use std::collections::HashMap;
 use std::rc::Rc;
-use ws::{listen, CloseCode, Error, Handler, Message, Result};
 
 mod client;
 
@@ -190,10 +190,10 @@ impl Handler for Server {
 
 /// Used to spawn a server in integration tests
 #[cfg(test)]
-pub fn spawn_local_server(port: u16) -> ws::Sender {
+pub fn spawn_local_server(port: u16) -> parity_ws::Sender {
+    use parity_ws::WebSocket;
     use std::sync::mpsc::channel;
     use std::thread::spawn;
-    use ws::WebSocket;
 
     let listen_address = format!("localhost:{}", port);
 
@@ -202,7 +202,7 @@ pub fn spawn_local_server(port: u16) -> ws::Sender {
     spawn(move || {
         let sessions: Rc<RefCell<HashMap<String, Session>>> = Rc::default();
 
-        let ws = WebSocket::new(|out: ws::Sender| Server {
+        let ws = WebSocket::new(|out: parity_ws::Sender| Server {
             out: out.into(),
             sessions: sessions.clone(),
         })

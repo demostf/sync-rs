@@ -5,7 +5,7 @@ authors = ["Robin Appelman <robin@icewind.nl>"]
 edition = "2018"
 
 [dependencies]
-ws = "0.9.1"
+parity-ws = "0.10"
 mio = "0.6.19"
 serde = { version = "1.0.102", features = ["derive"] }
 serde_json = "1.0.41"

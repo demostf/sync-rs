@@ -1,9 +1,9 @@
 use crate::{spawn_local_server, SyncCommand};
+use parity_ws::Sender;
 use portpicker::pick_unused_port;
 use std::thread::sleep;
 use std::time::Duration;
 use websocket_lite::{Client, ClientBuilder, Message, NetworkStream};
-use ws::Sender;
 
 const DELAY: Duration = Duration::from_millis(50);
 
