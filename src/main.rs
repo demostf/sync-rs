@@ -1,7 +1,6 @@
-use mio::Token;
 use serde::{Deserialize, Serialize};
 
-use parity_ws::{listen, CloseCode, Error, Handler, Message, Result};
+use parity_ws::{listen, util::Token, CloseCode, Error, Handler, Message, Result};
 use std::collections::HashMap;
 use std::rc::Rc;
 

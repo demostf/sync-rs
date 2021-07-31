@@ -5,14 +5,13 @@ authors = ["Robin Appelman <robin@icewind.nl>"]
 edition = "2018"
 
 [dependencies]
-parity-ws = "0.10"
-mio = "0.6.19"
-serde = { version = "1.0.102", features = ["derive"] }
-serde_json = "1.0.41"
-enum_dispatch = "0.2.0"
+parity-ws = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+enum_dispatch = "0.3"
 
 [dev-dependencies]
-maplit = "1.0.2"
-portpicker = "0.1.0"
-websocket-lite = "0.3.4"
-better-panic = "0.2.0"
+maplit = "1"
+portpicker = "0.1"
+websocket-lite = "0.5"
+better-panic = "0.2"
