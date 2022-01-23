@@ -1,9 +1,16 @@
 FROM ekidd/rust-musl-builder AS build
 
-# We need to add the source code to the image because `rust-musl-builder`
-# assumes a UID of 1000, but TravisCI has switched to 2000.
-ADD . ./
-RUN sudo chown -R rust:rust .
+COPY Cargo.toml Cargo.lock ./
+
+# Build with a dummy main to pre-build dependencies
+RUN mkdir src && \
+ sudo chown -R rust:rust . && \
+ echo "fn main(){}" > src/main.rs && \
+ cargo build --release && \
+ rm -r src
+
+COPY src/ ./src/
+RUN sudo chown -R rust:rust . && touch src/main.rs
 
 RUN cargo build --release
 
