@@ -3,6 +3,7 @@ use parity_ws::{util::Token, Result, Sender};
 
 #[enum_dispatch(Client)]
 pub(crate) trait ClientTrait {
+    #[allow(clippy::result_large_err)]
     fn send(&self, msg: &str) -> Result<()>;
 
     fn token(&self) -> Token;

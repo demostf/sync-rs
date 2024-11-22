@@ -253,7 +253,7 @@ mod tests {
         let sessions: RefCell<HashMap<String, Session>> = RefCell::new(HashMap::new());
         let sender = Client::mock(1);
         let command = SyncCommand::Create {
-            session: "test".into(),
+            session: "test",
             token: "bar",
         };
 

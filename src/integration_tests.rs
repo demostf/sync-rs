@@ -163,7 +163,7 @@ fn integration_tests() {
 
 fn send<T: std::io::Write>(client: &mut Client<T>, command: SyncCommand) {
     client
-        .send(Message::text(&serde_json::to_string(&command).unwrap()))
+        .send(Message::text(serde_json::to_string(&command).unwrap()))
         .unwrap();
     sleep(DELAY);
 }
