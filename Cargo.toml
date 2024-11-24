@@ -2,13 +2,20 @@
 name = "sync"
 version = "0.1.0"
 authors = ["Robin Appelman <robin@icewind.nl>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
-parity-ws = "0.11"
+tokio = { version = "1.41.1", features = ["rt-multi-thread", "macros", "sync"] }
+tokio-tungstenite = "0.24.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-enum_dispatch = "0.3"
+dashmap = "6.1.0"
+tracing = "0.1.40"
+tracing-subscriber = "0.3.18"
+main_error = "0.1.2"
+futures-channel = "0.3.31"
+log = "0.4.22"
+futures-util = "0.3.31"
 
 [dev-dependencies]
 maplit = "1"
