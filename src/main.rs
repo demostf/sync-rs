@@ -64,7 +64,7 @@ impl Server {
         }
     }
 
-    fn handle_command<'a>(&self, command: SyncCommand<'_>, sender: SocketAddr) {
+    fn handle_command(&self, command: SyncCommand, sender: SocketAddr) {
         match &command {
             SyncCommand::Create { session, token } => {
                 self.sessions
