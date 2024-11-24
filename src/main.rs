@@ -29,6 +29,7 @@ pub enum SyncCommand<'a> {
     Join { session: &'a str },
     Tick { session: &'a str, tick: u64 },
     Play { session: &'a str, play: bool },
+    Clients { session: &'a str, count: usize },
 }
 
 pub struct Server {
@@ -63,7 +64,7 @@ impl Server {
         }
     }
 
-    async fn handle_command<'a>(&self, command: SyncCommand<'_>, sender: SocketAddr) {
+    fn handle_command<'a>(&self, command: SyncCommand<'_>, sender: SocketAddr) {
         match &command {
             SyncCommand::Create { session, token } => {
                 self.sessions
@@ -84,6 +85,13 @@ impl Server {
                         self.send_command(&sender, &initial_command);
                     }
                     session.join(sender);
+                    self.send_command(
+                        &session.owner,
+                        &SyncCommand::Clients {
+                            session: session_name,
+                            count: session.clients().count(),
+                        },
+                    )
                 }
                 None => error!(session = session_name, "session not found for command"),
             },
@@ -99,6 +107,17 @@ impl Server {
                     error!(session, "session not found for command");
                 }
             },
+            _ => {}
+        }
+    }
+
+    fn handle_disconnect(&self, peer: &SocketAddr) {
+        for mut session in self.sessions.iter_mut() {
+            session.remove_client(peer);
+            self.send_command(&session.owner, &SyncCommand::Clients {
+                session: &session.token,
+                count: session.clients().count(),
+            })
         }
     }
 
@@ -132,7 +151,7 @@ impl Server {
                 match serde_json::from_str(message) {
                     Ok(command) => {
                         debug!(sender = %addr, message = ?command, "Received a message");
-                        self.handle_command(command, addr).await;
+                        self.handle_command(command, addr);
                     }
                     Err(e) => {
                         warn!(sender = %addr, message, error = %e, "Error while decoding message");
@@ -152,6 +171,7 @@ impl Server {
 
         info!(%addr, "disconnected");
         self.peers.remove(&addr);
+        self.handle_disconnect(&addr);
     }
 }
 
@@ -169,7 +189,9 @@ async fn main() -> MainResult {
     let state = Arc::new(Server::new());
 
     // Create the event loop and TCP listener we'll accept connections on.
-    let listener = TcpListener::bind(&listen_address).await.expect("Failed to bind");
+    let listener = TcpListener::bind(&listen_address)
+        .await
+        .expect("Failed to bind");
 
     info!("listening on: {:?}", listen_address);
 

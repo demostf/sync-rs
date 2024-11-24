@@ -10,7 +10,7 @@ pub struct Session {
     tick: u64,
     playing: bool,
     owner_left: Option<Instant>,
-    token: String,
+    pub token: String,
 }
 
 impl PartialEq for Session {
@@ -64,6 +64,10 @@ impl Session {
 
     pub fn clients(&self) -> impl Iterator<Item = &SocketAddr> {
         self.clients.iter()
+    }
+
+    pub fn remove_client(&mut self, peer: &SocketAddr) {
+        self.clients.retain(|client| client != peer)
     }
 
     pub fn handle_command(&mut self, command: &SyncCommand) {
