@@ -16,6 +16,7 @@ main_error = "0.1.2"
 futures-channel = "0.3.31"
 log = "0.4.22"
 futures-util = "0.3.31"
+real-ip = "0.1.0"
 
 [dev-dependencies]
 maplit = "1"

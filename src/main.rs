@@ -1,6 +1,7 @@
 mod session;
 
 use serde::{Deserialize, Serialize};
+use std::fmt::{Display, Formatter};
 
 use crate::session::Session;
 use dashmap::DashMap;
@@ -9,16 +10,19 @@ use futures_util::future::select;
 use futures_util::StreamExt;
 use futures_util::TryStreamExt;
 use main_error::MainResult;
-use std::net::{Ipv4Addr, SocketAddr};
+use real_ip::{real_ip, IpNet};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::pin::pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::Message;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, error, info, warn};
 
 type Tx = Sender<Message>;
-type PeerMap = DashMap<SocketAddr, Tx>;
+type PeerMap = DashMap<PeerId, Tx>;
 type Sessions = DashMap<String, Session>;
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -32,7 +36,17 @@ pub enum SyncCommand<'a> {
     Clients { session: &'a str, count: usize },
 }
 
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub struct PeerId(IpAddr, u64);
+
+impl Display for PeerId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}#{}", self.0, self.1)
+    }
+}
+
 pub struct Server {
+    id_counter: AtomicU64,
     peers: PeerMap,
     sessions: Sessions,
 }
@@ -40,12 +54,17 @@ pub struct Server {
 impl Server {
     fn new() -> Self {
         Server {
+            id_counter: AtomicU64::default(),
             peers: PeerMap::with_capacity(128),
             sessions: Sessions::with_capacity(64),
         }
     }
 
-    fn send_text<S: Into<String>>(&self, peer: &SocketAddr, text: S) {
+    fn next_peer_id(&self) -> u64 {
+        self.id_counter.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn send_text<S: Into<String>>(&self, peer: &PeerId, text: S) {
         if let Some(mut tx) = self.peers.get_mut(peer) {
             if let Err(e) = tx.try_send(Message::Text(text.into())) {
                 error!(%peer, ?e, "failed to send message to client")
@@ -53,7 +72,7 @@ impl Server {
         }
     }
 
-    pub fn send_command(&self, peer: &SocketAddr, command: &SyncCommand) {
+    pub fn send_command(&self, peer: &PeerId, command: &SyncCommand) {
         self.send_text(peer, serde_json::to_string(command).unwrap())
     }
 
@@ -64,7 +83,7 @@ impl Server {
         }
     }
 
-    fn handle_command(&self, command: SyncCommand, sender: SocketAddr) {
+    fn handle_command(&self, command: SyncCommand, sender: PeerId) {
         match &command {
             SyncCommand::Create { session, token } => {
                 self.sessions
@@ -111,13 +130,17 @@ impl Server {
         }
     }
 
-    fn handle_disconnect(&self, peer: &SocketAddr) {
+    fn handle_disconnect(&self, peer: &PeerId) {
+        self.peers.remove(peer);
         for mut session in self.sessions.iter_mut() {
             session.remove_client(peer);
-            self.send_command(&session.owner, &SyncCommand::Clients {
-                session: &session.token,
-                count: session.clients().count(),
-            })
+            self.send_command(
+                &session.owner,
+                &SyncCommand::Clients {
+                    session: &session.token,
+                    count: session.clients().count(),
+                },
+            )
         }
     }
 
@@ -131,18 +154,33 @@ impl Server {
             });
     }
 
-    #[instrument(skip(self, raw_stream))]
     async fn handle_connection(&self, raw_stream: TcpStream, addr: SocketAddr) {
         debug!("incoming connection");
 
-        let ws_stream = tokio_tungstenite::accept_async(raw_stream)
-            .await
-            .expect("Error during the websocket handshake occurred");
-        info!("connection established");
+        let mut remote_ip = addr.ip();
+
+        let ws_stream_res =
+            tokio_tungstenite::accept_hdr_async(raw_stream, |req: &Request, response: Response| {
+                if let Some(ip) = real_ip(req.headers(), addr.ip(), TRUSTED_PROXIES) {
+                    remote_ip = ip;
+                }
+                Ok::<_, ErrorResponse>(response)
+            })
+            .await;
+        let peer_id = PeerId(remote_ip, self.next_peer_id());
+        let ws_stream = match ws_stream_res {
+            Ok(ws_stream) => ws_stream,
+            Err(error) => {
+                error!(?error, %peer_id, "error while performing websocket handshake");
+                return;
+            }
+        };
+
+        info!(peer = %peer_id, "connection established");
 
         // Insert the write part of this peer to the peer map.
         let (tx, rx) = channel(16);
-        self.peers.insert(addr, tx);
+        self.peers.insert(peer_id, tx);
 
         let (outgoing, incoming) = ws_stream.split();
 
@@ -150,11 +188,11 @@ impl Server {
             if let Ok(message) = msg.to_text() {
                 match serde_json::from_str(message) {
                     Ok(command) => {
-                        debug!(sender = %addr, message = ?command, "Received a message");
-                        self.handle_command(command, addr);
+                        debug!(sender = %peer_id, message = ?command, "Received a message");
+                        self.handle_command(command, peer_id);
                     }
                     Err(e) => {
-                        warn!(sender = %addr, message, error = %e, "Error while decoding message");
+                        warn!(sender = %peer_id, message, error = %e, "Error while decoding message");
                     }
                 }
             } else {
@@ -169,9 +207,8 @@ impl Server {
         let receive_from_others = pin!(receive_from_others);
         select(handle_messages, receive_from_others).await;
 
-        info!(%addr, "disconnected");
-        self.peers.remove(&addr);
-        self.handle_disconnect(&addr);
+        info!(%peer_id, "disconnected");
+        self.handle_disconnect(&peer_id);
     }
 }
 
@@ -203,3 +240,8 @@ async fn main() -> MainResult {
 
     Ok(())
 }
+
+const TRUSTED_PROXIES: &[IpNet] = &[IpNet::new_assert(
+    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 0)),
+    8,
+)];

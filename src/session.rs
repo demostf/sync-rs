@@ -1,12 +1,11 @@
-use crate::SyncCommand;
-use std::net::SocketAddr;
+use crate::{PeerId, SyncCommand};
 use std::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct Session {
-    pub owner: SocketAddr,
+    pub owner: PeerId,
     owner_token: String,
-    clients: Vec<SocketAddr>,
+    clients: Vec<PeerId>,
     tick: u64,
     playing: bool,
     owner_left: Option<Instant>,
@@ -20,7 +19,7 @@ impl PartialEq for Session {
 }
 
 impl Session {
-    pub fn new(owner: SocketAddr, token: String, owner_token: String) -> Self {
+    pub fn new(owner: PeerId, token: String, owner_token: String) -> Self {
         Session {
             owner,
             owner_token,
@@ -32,11 +31,11 @@ impl Session {
         }
     }
 
-    pub fn join(&mut self, client: SocketAddr) {
+    pub fn join(&mut self, client: PeerId) {
         self.clients.push(client);
     }
 
-    pub fn set_owner(&mut self, owner: SocketAddr, owner_token: &str) -> bool {
+    pub fn set_owner(&mut self, owner: PeerId, owner_token: &str) -> bool {
         if owner_token == self.owner_token {
             self.owner = owner;
             self.owner_left = None;
@@ -62,11 +61,11 @@ impl Session {
         .into_iter()
     }
 
-    pub fn clients(&self) -> impl Iterator<Item = &SocketAddr> {
+    pub fn clients(&self) -> impl Iterator<Item = &PeerId> {
         self.clients.iter()
     }
 
-    pub fn remove_client(&mut self, peer: &SocketAddr) {
+    pub fn remove_client(&mut self, peer: &PeerId) {
         self.clients.retain(|client| client != peer)
     }
 
