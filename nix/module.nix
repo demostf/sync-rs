@@ -21,6 +21,12 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    users.users.demostf-sync = {
+      group = "demostf-sync";
+      isSystemUser = true;
+    };
+    users.groups.demostf-sync = {};
+
     systemd.services.demostf-sync = {
       wantedBy = ["multi-user.target"];
       environment = {
@@ -28,7 +34,7 @@ in {
       };
 
       serviceConfig = {
-        DynamicUser = true;
+        User = "demostf-sync";
         ExecStart = "${cfg.package}/bin/sync";
         Restart = "on-failure";
 
@@ -55,9 +61,11 @@ in {
         ProcSubset = "pid";
         ProtectProc = "invisible";
         SystemCallFilter = ["@system-service" "~@resources" "~@privileged"];
-        UMask = "0007";
+        UMask = "0077";
         IPAddressDeny = "any";
         RuntimeDirectory = "demostf-sync";
+        RestrictSUIDSGID = true;
+        RemoveIPC = true;
       };
     };
   };

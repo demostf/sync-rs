@@ -2,7 +2,7 @@ mod session;
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-use std::fs::remove_file;
+use std::fs::{remove_file, set_permissions, Permissions};
 use crate::session::Session;
 use dashmap::DashMap;
 use futures_channel::mpsc::{channel, Sender};
@@ -12,6 +12,7 @@ use futures_util::TryStreamExt;
 use main_error::MainResult;
 use real_ip::{real_ip, IpNet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -284,6 +285,7 @@ async fn listen_tcp(listen_address: SocketAddr) -> impl Stream<Item=Result<(Box<
 
 async fn listen_unix(path: &Path) -> impl Stream<Item=Result<(Box<dyn StreamTrait>, IpAddr), std::io::Error>> {
     let listener = UnixListener::bind(path).expect("Failed to bind");
+    set_permissions(path, Permissions::from_mode(0o660)).expect("Failed to set socket permissions");
 
     info!("listening on: {}", path.display());
 
