@@ -66,7 +66,7 @@ impl Server {
 
     fn send_text<S: Into<String>>(&self, peer: &PeerId, text: S) {
         if let Some(mut tx) = self.peers.get_mut(peer) {
-            if let Err(e) = tx.try_send(Message::Text(text.into())) {
+            if let Err(e) = tx.try_send(Message::Text(text.into().into())) {
                 error!(%peer, ?e, "failed to send message to client")
             }
         }
