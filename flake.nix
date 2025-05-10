@@ -10,5 +10,21 @@
       inputs.flakelight.follows = "flakelight";
     };
   };
-  outputs = { mill-scale, ... }: mill-scale ./. { };
+  outputs = {mill-scale, ...}:
+    mill-scale ./. {
+      nixosModules = {outputs, ...}: {
+        default = {
+          pkgs,
+          config,
+          lib,
+          ...
+        }: {
+          imports = [./nix/module.nix];
+          config = lib.mkIf config.services.demostf.sync.enable {
+            nixpkgs.overlays = [outputs.overlays.default];
+            services.demostf.sync.package = lib.mkDefault pkgs.demostf-sync;
+          };
+        };
+      };
+    };
 }

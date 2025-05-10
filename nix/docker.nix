@@ -1,6 +1,6 @@
-{ dockerTools
-, demostf-sync
-,
+{
+  dockerTools,
+  demostf-sync,
 }:
 dockerTools.buildLayeredImage {
   name = "demostf/sync";
@@ -11,9 +11,9 @@ dockerTools.buildLayeredImage {
     dockerTools.caCertificates
   ];
   config = {
-    Cmd = [ "sync" ];
+    Cmd = ["sync"];
     ExposedPorts = {
-      "80/tcp" = { };
+      "80/tcp" = {};
     };
   };
 }
