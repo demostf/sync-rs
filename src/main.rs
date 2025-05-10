@@ -2,21 +2,26 @@ mod session;
 
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
-
+use std::fs::remove_file;
 use crate::session::Session;
 use dashmap::DashMap;
 use futures_channel::mpsc::{channel, Sender};
 use futures_util::future::select;
-use futures_util::StreamExt;
+use futures_util::{FutureExt, Stream, StreamExt};
 use futures_util::TryStreamExt;
 use main_error::MainResult;
 use real_ip::{real_ip, IpNet};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::{Path, PathBuf};
 use std::pin::pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
+use tokio::select;
+use tokio::signal::ctrl_c;
+use tokio_stream::wrappers::{TcpListenerStream, UnixListenerStream};
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
@@ -154,19 +159,17 @@ impl Server {
             });
     }
 
-    async fn handle_connection(&self, raw_stream: TcpStream, addr: SocketAddr) {
+    async fn handle_connection<S: AsyncRead + AsyncWrite + Unpin>(&self, raw_stream: S, mut remote_ip: IpAddr) {
         debug!("incoming connection");
-
-        let mut remote_ip = addr.ip();
 
         let ws_stream_res =
             tokio_tungstenite::accept_hdr_async(raw_stream, |req: &Request, response: Response| {
-                if let Some(ip) = real_ip(req.headers(), addr.ip(), TRUSTED_PROXIES) {
+                if let Some(ip) = real_ip(req.headers(), remote_ip, TRUSTED_PROXIES) {
                     remote_ip = ip;
                 }
                 Ok::<_, ErrorResponse>(response)
             })
-            .await;
+                .await;
         let peer_id = PeerId(remote_ip, self.next_peer_id());
         let ws_stream = match ws_stream_res {
             Ok(ws_stream) => ws_stream,
@@ -221,24 +224,73 @@ async fn main() -> MainResult {
     let port: u16 = std::env::var("PORT")
         .unwrap_or_else(|_| "80".to_string())
         .parse()?;
-    let listen_address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+    let socket = std::env::var("SOCKET").ok().map(PathBuf::from);
 
     let state = Arc::new(Server::new());
+    let shutdown = ctrl_c().map(|_| ());
 
-    // Create the event loop and TCP listener we'll accept connections on.
+    let listener = if let Some(socket) = socket.as_deref() {
+        if socket.exists() {
+            remove_file(socket)?;
+        }
+        Box::new(listen_unix(socket).await) as Box<dyn Stream<Item=Result<(Box<dyn StreamTrait>, IpAddr), std::io::Error>>>
+    } else {
+        let listen_address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
+        Box::new(listen_tcp(listen_address).await)
+    };
+    let mut listener = Box::into_pin(listener);
+
+    let serve = async {
+        while let Some(Ok((stream, addr))) = listener.next().await {
+            let state = state.clone();
+            tokio::spawn(async move { state.handle_connection(stream, addr).await });
+        }
+    };
+    select! {
+        _ = serve => {
+            warn!("socket disconnected");
+        }
+        _ = shutdown => {
+            info!("shutdown requested");
+        }
+    }
+
+    info!("shutting down");
+
+    if let Some(socket) = socket.as_deref() {
+        remove_file(socket)?;
+    }
+
+    Ok(())
+}
+
+trait StreamTrait: AsyncRead + AsyncWrite + Send + Unpin {}
+
+impl StreamTrait for TcpStream{}
+impl StreamTrait for UnixStream{}
+
+async fn listen_tcp(listen_address: SocketAddr) -> impl Stream<Item=Result<(Box<dyn StreamTrait>, IpAddr), std::io::Error>> {
     let listener = TcpListener::bind(&listen_address)
         .await
         .expect("Failed to bind");
 
     info!("listening on: {:?}", listen_address);
 
-    // Let's spawn the handling of each connection in a separate task.
-    while let Ok((stream, addr)) = listener.accept().await {
-        let state = state.clone();
-        tokio::spawn(async move { state.handle_connection(stream, addr).await });
-    }
+    TcpListenerStream::new(listener).map_ok(|stream| {
+        let addr = stream.peer_addr().map(|addr| addr.ip()).unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+        (Box::new(stream) as Box::<dyn StreamTrait>, addr)
+    })
+}
 
-    Ok(())
+async fn listen_unix(path: &Path) -> impl Stream<Item=Result<(Box<dyn StreamTrait>, IpAddr), std::io::Error>> {
+    let listener = UnixListener::bind(path).expect("Failed to bind");
+
+    info!("listening on: {}", path.display());
+
+    UnixListenerStream::new(listener).map_ok(|stream| {
+        let addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        (Box::new(stream) as Box::<dyn StreamTrait>, addr)
+    })
 }
 
 const TRUSTED_PROXIES: &[IpNet] = &[IpNet::new_assert(
